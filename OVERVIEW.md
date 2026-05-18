@@ -1,17 +1,18 @@
 # 하네스(Harness)의 구조
 
-> 본 문서는 **해당 하네스의 구조를 이해하기 위한 자료**입니다. 프로젝트 본체의 `CLAUDE.md` / `PROJECT.md` / `.claude/skills/**` 가 SSOT(Single Source of Truth)입니다.
+> 본 문서는 **해당 하네스의 구조를 이해하기 위한 자료**입니다. 프로젝트 본체의 `CLAUDE.md` / `PROJECT.md` / `.claude/skills/**` / `.claude/docs/**` 가 SSOT(Single Source of Truth)입니다.
 
 ---
 
 ## 1. 한 줄 요약
 
-> **"기획(Spec) → 사전 일관성 검토 → 구현(TDD) → AI 코드 리뷰 → 자동 Fix → e2e → PR → 다중 통합"** 전 라이프사이클을 **격리된 sub-agent + worktree + 무한 재시도 큐(/loop + ScheduleWakeup)** 위에 올린 Claude Code 전용 자동화 골격.
+> **"기획(Spec) → 사전 일관성 검토 → 구현(TDD) → AI 코드 리뷰 → 자동 Fix(격리 sub-agent) → e2e → PR → 다중 통합"** 전 라이프사이클을 **격리된 sub-agent + worktree + 무한 재시도 큐(/loop + ScheduleWakeup)** 위에 올린 Claude Code 전용 자동화 골격.
 
-핵심은 두 가지입니다.
+핵심은 세 가지입니다.
 
 1. **역할 격리**: Main Claude 가 직접 모든 일을 하지 않고, 좁은 책임의 **sub-agent 들**을 `Agent` tool 로 invoke 해서 병렬·격리 컨텍스트에서 처리합니다.
 2. **사전 게이트(BLOCK)**: spec 이 디스크에 박히기 **전**, 구현이 시작되기 **전**, 코드가 PR 로 나가기 **전** — 단계마다 자동 검토를 끼워서 잘못된 상태를 멈추게 합니다.
+3. **Main ctx 보호**: AI Review 의 자동 후속 흐름(fix / e2e / RESOLUTION) 도 `resolution-applier` sub-agent 가 격리 컨텍스트에서 담당. main 으로 돌아오는 건 한 줄 STATUS + ESCALATE flag — 사용자 결정 필요한 순간만 main 으로 escalate.
 
 ---
 
@@ -37,6 +38,7 @@ flowchart TB
         A2["5 consistency<br/>checkers"]
         A3["6 merge agents<br/>(4 analyzer + summary +<br/>conflict resolver)"]
         A4["1 router<br/>(haiku — 빠른 필터)"]
+        A5["resolution-applier<br/>(자동 fix + e2e + RESOLUTION)"]
     end
 
     subgraph Infra["인프라 (Repo 자체)"]
@@ -45,6 +47,8 @@ flowchart TB
         I3["review/code · consistency · merge<br/>(세션 산출물 — nested ISO 경로)"]
         I4[".claude/worktrees/<br/>(작업별 격리 디렉토리)"]
         I5["Hooks (pre-commit,<br/>PreToolUse, UserPromptSubmit)"]
+        I6[".claude/docs/<br/>(공유 SSOT — lazy load)"]
+        I7[".claude/tools/run-test.sh<br/>(stage 출력 truncation)"]
     end
 
     U --> M
@@ -54,22 +58,27 @@ flowchart TB
     S2 -.uses.-> S4
     S5 -.chains.-> S3 & S4
     S3 --> A2
-    S4 --> A1 & A4
+    S4 --> A1 & A4 & A5
     S5 --> A3
     M --> I1 & I2 & I3 & I4
     I5 -.guards.-> M
+    M -.lazy reads.-> I6
+    S2 & A5 -.uses.-> I7
 ```
 
 | 계층 | 구성 요소 | 역할 |
 | --- | --- | --- |
-| **정책 문서** | `CLAUDE.md`, `PROJECT.md` | 모든 역할이 따라야 하는 공통 규약 · 프로젝트별 매핑 |
+| **정책 문서** | `CLAUDE.md` (78줄), `PROJECT.md` | 모든 역할이 따라야 하는 공통 규약 SSOT · 프로젝트별 매핑 |
+| **공유 docs** | `.claude/docs/{worktree-policy, plan-lifecycle, subagent-call-contract, test-wrapper}.md` | 호출 시에만 lazy load 되는 상세 운영 규칙. CLAUDE.md / SKILL.md / agent definition 이 인용 |
 | **Skills** | `.claude/skills/<name>/SKILL.md` | 역할별 워크플로 (planner / developer / 3 reviewer류) |
-| **Sub-agents** | `.claude/agents/*.md` | 좁은 책임의 검토 인격. 격리 컨텍스트 |
+| **Sub-agents** | `.claude/agents/*.md` (28종) | 좁은 책임의 검토·실행 인격. 격리 컨텍스트 |
 | **Slash commands** | `/ai-review`, `/consistency-check`, `/merge-coordinate` | Skill 진입점 |
-| **Orchestrators (Python)** | `.claude/skills/<name>/scripts/*_orchestrator.py` | **model 호출 없이** 세션 디렉토리 · prompt 파일 · `_retry_state.json` 생성 |
+| **Orchestrators (Python)** | `.claude/skills/<name>/scripts/*_orchestrator.py` | **model 호출 없이** 세션 디렉토리 · prompt 파일 · `_retry_state.json` 생성. `--summary-state` / `--update` / `--apply-routing` 으로 main 이 JSON 직접 Read 안 함 |
+| **Tools** | `.claude/tools/{ensure-worktree, run-test}.sh` | worktree 생성 헬퍼 · TEST WORKFLOW stage 출력 truncation wrapper |
 | **Hooks** | `.claude/hooks/`, `.githooks/pre-commit` | default branch 편집 차단, prompt reminder, commit 차단 |
 | **Worktrees** | `.claude/worktrees/<task>-<slug>/` | 작업별 격리. main 워크트리는 통합/릴리스 전용 |
 | **세션 산출물** | `review/{code,consistency,merge}/<YYYY>/<MM>/<DD>/<hh>_<mm>_<ss>/` | 모든 검토 흔적. `SUMMARY.md` + 에이전트별 결과 + `_retry_state.json` |
+| **테스트 로그** | `_test_logs/<stage>-<ts>.log` | run-test.sh 가 떨어뜨림. main ctx 안 거치고 디스크 보존만 |
 
 ---
 
@@ -109,18 +118,18 @@ flowchart TD
     TDD2 --> TDD3["7. 테스트 보강 (Refactor)<br/>누락·잘못된 테스트 정리"]
     TDD3 --> TDDCommit["→ commit:<br/>feat/fix/refactor(scope):"]
 
-    TDDCommit --> Lint["8-1. lint<br/>npm run lint<br/>(frontend + backend)"]
+    TDDCommit --> Lint["8-1. run-test.sh lint<br/>(stdout 한 줄, 디스크 보존)"]
     Lint --> LintOk{"통과?"}
     LintOk -->|FAIL| TDD3
-    LintOk -->|PASS| Unit["8-2. unit test<br/>npm test<br/>(jest / vitest)"]
+    LintOk -->|PASS| Unit["8-2. run-test.sh unit"]
 
     Unit --> UnitOk{"통과?"}
     UnitOk -->|FAIL| TDD3
-    UnitOk -->|PASS| Build["8-3. build<br/>npm run build<br/>(tsc · next build · nest build)"]
+    UnitOk -->|PASS| Build["8-3. run-test.sh build"]
 
     Build --> BuildOk{"통과?"}
     BuildOk -->|FAIL| TDD3
-    BuildOk -->|PASS| E2E["8-4. e2e<br/>make e2e-test<br/>(docker compose, 실 인프라)"]
+    BuildOk -->|PASS| E2E["8-4. run-test.sh e2e<br/>(docker compose, 실 인프라)"]
 
     E2E --> E2EOk{"통과?"}
     E2EOk -->|FAIL| TDD3
@@ -131,14 +140,13 @@ flowchart TD
     Review --> CodeReview
     Merge --> MergeFlow
 
-    CodeReview["/ai-review<br/>(router + 13 reviewer + summary)"] --> AutoFix["자동 후속 흐름<br/>(SUMMARY → 분류 → 수정)"]
-    AutoFix --> ReReview["수정 후 lint + unit + build 재실행"]
-    ReReview --> ReReviewOk{"통과?"}
-    ReReviewOk -->|FAIL| AutoFix
-    ReReviewOk -->|PASS| AutoE2E["로컬 e2e 의무 실행<br/>(skip 절대 금지)"]
-    AutoE2E --> AutoOk{"통과?"}
-    AutoOk -->|FAIL ≤3회| AutoFix
-    AutoOk -->|PASS| Resolution["RESOLUTION.md 작성<br/>+ commit: refactor(scope):<br/>(SUMMARY ID ↔ commit hash)"]
+    CodeReview["/ai-review<br/>(router + 13 reviewer + summary)"] --> AutoFix["resolution-applier sub-agent<br/>(격리 ctx: 분류·fix·e2e·RESOLUTION)"]
+    AutoFix --> EscalateCheck{"ESCALATE flag?"}
+    EscalateCheck -->|"no"| Resolution["RESOLUTION.md 작성 완료<br/>+ commit: refactor(scope):<br/>(SUMMARY ID ↔ commit hash)"]
+    EscalateCheck -->|"spec"| SpecChain["/consistency-check --spec<br/>→ BLOCK:NO 시 반영<br/>→ resolution-applier 재호출"]
+    EscalateCheck -->|"user-decision / infra<br/>e2e-fail-3x / sensitive-fix"| AskUser["⚠️ AskUserQuestion<br/>사용자 결정 요청"]
+    SpecChain --> AutoFix
+    AskUser --> Resolution
     Resolution --> PR["PR 생성 · 사용자 검토 · merge"]
 
     MergeFlow["merge-coordinator<br/>4 analyzer + summary + resolver"] --> IntegrateWT["격리 worktree<br/>integrate-<slug>/"]
@@ -155,8 +163,8 @@ flowchart TD
     style UnitOk fill:#fff5b0,stroke:#c80
     style BuildOk fill:#fff5b0,stroke:#c80
     style E2EOk fill:#fff5b0,stroke:#c80
-    style AutoOk fill:#fff5b0,stroke:#c80
-    style ReReviewOk fill:#fff5b0,stroke:#c80
+    style EscalateCheck fill:#fff5b0,stroke:#c80
+    style AskUser fill:#fee,stroke:#c00
 ```
 
 ### 3.1 TDD + TEST WORKFLOW 상세
@@ -175,10 +183,10 @@ flowchart LR
 
     subgraph TEST["TEST WORKFLOW (8단계 — 순서 고정)"]
         direction TB
-        S1["8-1. lint<br/>가장 빠른 피드백<br/>npm run lint"]
-        S2["8-2. unit test<br/>in-process, 초 단위<br/>npm test"]
-        S3["8-3. build<br/>tsc + bundle<br/>npm run build"]
-        S4["8-4. e2e<br/>docker + 실 인프라<br/>make e2e-test"]
+        S1["8-1. lint<br/>run-test.sh lint"]
+        S2["8-2. unit test<br/>run-test.sh unit"]
+        S3["8-3. build<br/>run-test.sh build"]
+        S4["8-4. e2e<br/>run-test.sh e2e"]
         S1 --> S2 --> S3 --> S4
     end
 
@@ -201,6 +209,8 @@ flowchart LR
 | build | 수십 초 ~ 분 | 중 | `tsc` 의 타입 오류 + bundler 의 dead import 검출. **e2e 의 docker 빌드 비용(분 단위) 낭비 방지** |
 | e2e | 분 단위 | 큼 | docker compose 위 multi-actor · 실 인프라 회귀 |
 
+각 단계는 `.claude/tools/run-test.sh <stage>` wrapper 로 호출 — 통과 시 stdout 한 줄 (≤100 토큰), 실패 시 한 줄 + 마지막 30줄 + 실패 마커 grep (≤2K 토큰). 전체 로그는 `_test_logs/<stage>-<ts>.log` 디스크 보존. raw 명령 직접 호출은 main ctx 폭주 위험으로 금지.
+
 **자동 커밋 매핑** (developer SKILL.md §단계별 자동 커밋):
 
 | 워크플로 단계 | commit 시점 | message prefix |
@@ -220,7 +230,7 @@ flowchart LR
 | 기획 | `spec/<영역>/*.md` (Overview · 본문 · Rationale 3섹션) | `review/consistency/<…>/SUMMARY.md` |
 | 구현 | `codebase/{frontend,backend}/**`, `plan/in-progress/<task>.md` | (단계별 자동 commit) |
 | 사전 검토 | (없음 — 차단만) | `review/consistency/<…>/{SUMMARY.md, <checker>.md}` |
-| 사후 리뷰 | `review/code/<…>/RESOLUTION.md` (구현자가 작성) | `review/code/<…>/{SUMMARY.md, <role>.md, _routing_decision.json}` |
+| 사후 리뷰 | `review/code/<…>/RESOLUTION.md` (resolution-applier 또는 구현자 작성) | `review/code/<…>/{SUMMARY.md, <role>.md, _routing_decision.json, _resolution_state.json, _resolution_log.md}` |
 | 다중 통합 | `.claude/worktrees/integrate-<slug>/` | `review/merge/<…>/{SUMMARY.md, <analyzer>.md, _conflicts/*.{md,patch}}` |
 | Plan 종료 | `plan/complete/<name>.md` (git mv) | — |
 
@@ -228,7 +238,7 @@ flowchart LR
 
 ## 4. AI Review 자동 후속 흐름 (Sequence)
 
-`/ai-review` 가 단순한 "조언" 이 아니라, **수정 → e2e → RESOLUTION 까지 자동으로 끝내는** 닫힌 루프입니다.
+`/ai-review` 가 단순한 "조언" 이 아니라, **수정 → e2e → RESOLUTION 까지 자동으로 끝내는** 닫힌 루프입니다. **자동 후속 처리는 resolution-applier sub-agent 가 격리 컨텍스트에서 담당** — main 으로 돌아오는 건 한 줄 STATUS + ESCALATE flag 뿐.
 
 ```mermaid
 sequenceDiagram
@@ -239,14 +249,18 @@ sequenceDiagram
     participant Router as review-router (haiku)
     participant Reviewers as 13 Reviewers (병렬)
     participant Summary as code-review-summary
-    participant Test as Local e2e
+    participant Resolver as resolution-applier
+    participant Test as Local e2e (run-test.sh)
 
     User->>Main: /ai-review --staged
     Main->>Orch: --prepare (model 호출 없음)
-    Orch-->>Main: session_dir + _retry_state.json + _prompts/*.md
+    Orch-->>Main: session_dir
+    Main->>Orch: --summary-state session_dir
+    Orch-->>Main: pending=N success=0 routing=pending
     Main->>Router: Agent(review-router)
-    Router-->>Main: STATUS=success<br/>(선별된 reviewer 목록)
-    Note over Main: agents_skipped 갱신<br/>0명이면 minimal SUMMARY 종료
+    Router-->>Main: STATUS=success (선별)
+    Main->>Orch: --apply-routing session_dir
+    Note over Main: agents_pending 갱신
 
     par 병렬 호출 (한 응답 안에서)
         Main->>Reviewers: Agent(security-reviewer)
@@ -255,6 +269,7 @@ sequenceDiagram
     end
 
     Reviewers-->>Main: STATUS=success/rate_limit/network/fatal<br/>+ ISSUES=n + PATH=<output_file>
+    Main->>Orch: --update --agent <name> --status <s>
 
     alt rate_limit 발생
         Main->>Main: ScheduleWakeup(delay=RESET_HINT)
@@ -266,30 +281,40 @@ sequenceDiagram
     end
 
     Note over Main: Critical/Warning 1건+ 이면 자동 후속 진입
-    Main->>Main: 분류 (spec 관련 / 코드 관련)
-    Main->>Main: 코드 수정 + unit test
-    Main->>Test: make e2e-test (또는 e2e-test-full)
-    Test-->>Main: PASS / FAIL
+    Main->>Resolver: Agent(resolution-applier, session_dir=...)
+    Note over Resolver: 격리 ctx 안에서:<br/>분류 (spec/코드)<br/>코드 fix + commit (SUMMARY#n 인용)<br/>spec 항목은 draft 작성<br/>e2e 실행 (run-test.sh wrapper)<br/>RESOLUTION.md 작성<br/>_resolution_state.json 갱신 (idempotency)
+    Resolver->>Test: run-test.sh e2e
+    Test-->>Resolver: PASS / FAIL (한 줄 + 디스크 로그)
+    Resolver-->>Main: STATUS=success ITEMS=8/10<br/>E2E=pass ESCALATE=no<br/>RESOLUTION=<path>
 
-    alt e2e FAIL (≤3회)
-        Main->>Main: 로그 분석 → 추가 fix
-        Main->>Test: 재실행
-    else e2e PASS
-        Main->>Main: RESOLUTION.md 작성<br/>(조치 항목 · TEST 결과 · 보류)
-        Main-->>User: 1-2문단 요약 + 세션 경로
+    alt ESCALATE=no
+        Main-->>User: RESOLUTION 1-2문단 요약
+    else ESCALATE=spec
+        Main->>Main: /consistency-check --spec <NEEDS_SPEC>
+        Note over Main: BLOCK:NO 시 spec 반영<br/>→ Resolver 재호출 (idempotency 복구)
+    else ESCALATE=user-decision/infra/e2e-fail-3x/sensitive-fix
+        Main-->>User: AskUserQuestion (사유·옵션)
+    else STATUS=rate_limit
+        Main->>Main: ScheduleWakeup → wake 시 Resolver 재호출
     end
 ```
 
-### 핵심 안전 가드
+### 핵심 안전 가드 — resolution-applier 의 ESCALATE 매트릭스
 
-자동 진행을 **중단하고 사용자에게 보고** 하는 사유:
+자동 진행을 **중단하고 main 으로 escalate** 하는 사유:
 
-- consistency-check `BLOCK: YES`
-- e2e **누적 3회 실패**
-- e2e 인프라 실행 불가 (Docker daemon, 디스크 등) — **skip 은 절대 금지**
-- 직전 수정과 무관한 사전 결함
-- DB 마이그레이션 · 외부 API 계약 변경 등 의미 변경 큰 자동 수정
-- SUMMARY 가 "사용자 결정 필요" 명시한 항목
+| ESCALATE | 조건 | main 의 후속 |
+| --- | --- | --- |
+| `no` | 모든 항목 처리 + e2e 통과 + spec 변경 0건 | 사용자에게 1-2문장 보고 + 종료 |
+| `spec` | spec 관련 항목 있음 — draft 만 작성 후 main 으로 위임 | `/consistency-check --spec` 자동 chain |
+| `user-decision` | SUMMARY 가 "사용자 결정 필요" 명시 | AskUserQuestion |
+| `infra` | docker daemon 미동작, 디스크 부족 등 환경 차단 | AskUserQuestion + 환경 복구 안내 |
+| `e2e-fail-3x` | e2e 3회 연속 실패 | AskUserQuestion + 부분 RESOLUTION |
+| `sensitive-fix` | DB 마이그레이션, 외부 API 계약, 인증 흐름 등 위험한 자동 수정 | AskUserQuestion + 변경 사항 표시 |
+
+**원칙**: 의심 시 ESCALATE=yes 가 default. 자동 진행이 위험할 때 sub-agent 가 마음대로 진행하지 않는다.
+
+**idempotency 보장**: resolution-applier 가 중간 종료돼도 `_resolution_state.json` + git log (commit 메시지의 `SUMMARY#<n>` 인용) + RESOLUTION.md 로 복구. main 은 같은 session_dir 로 재호출만 하면 됨.
 
 ---
 
@@ -298,7 +323,7 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     subgraph MainCtx["Main Claude 컨텍스트 (사용자 세션)"]
-        M["오케스트레이션 로직<br/>(STATUS 파싱, 상태 파일 갱신,<br/>ScheduleWakeup 결정)"]
+        M["오케스트레이션 로직<br/>(STATUS 파싱,<br/>orchestrator --update 호출,<br/>ScheduleWakeup 결정)"]
     end
 
     subgraph SubCtx1["Sub-agent #1 (격리 컨텍스트)"]
@@ -313,20 +338,28 @@ flowchart LR
         SAN["... 13종"]
     end
 
+    subgraph SubCtxR["Sub-agent #R (격리 컨텍스트)"]
+        SAR["resolution-applier<br/>분류·fix·e2e·RESOLUTION<br/>+ 확장 STATUS 라인<br/>(ITEMS / E2E / ESCALATE / NEEDS_SPEC)"]
+    end
+
     M -->|"Agent tool<br/>(prompt 두 줄만)"| SA1
     M -->|"Agent tool"| SA2
     M -->|"Agent tool"| SAN
+    M -->|"Agent tool (session_dir)"| SAR
 
     SA1 -->|"STATUS=success ISSUES=3<br/>PATH=... RESET_HINT="| M
     SA2 -->|"STATUS=rate_limit<br/>RESET_HINT=1800"| M
     SAN -->|"STATUS=success ..."| M
+    SAR -->|"STATUS=success ITEMS=8/10<br/>E2E=pass ESCALATE=no<br/>RESOLUTION=..."| M
 ```
 
 **왜 이렇게 설계했는가?**
 
-1. **Main 컨텍스트 보호**: 13개 reviewer 의 분석 결과(파일 본문 + 코멘트 + 코드 인용 등)가 main 의 토큰 윈도우에 쌓이지 않습니다. Main 은 `_retry_state.json` 과 STATUS 한 줄만 봅니다.
+1. **Main 컨텍스트 보호**: reviewer 13개의 분석 결과 + resolution-applier 의 fix·e2e 로그가 main 의 토큰 윈도우에 쌓이지 않습니다. Main 은 한 줄 STATUS 만 봅니다.
 2. **병렬 처리**: 한 응답 안에서 multiple `Agent` tool call → 13개가 동시에 돌아갑니다.
 3. **재시도 단순화**: STATUS=rate_limit 으로 분류된 agent 만 다음 wake 사이클에서 다시 호출 — 성공한 것은 건드리지 않습니다.
+4. **상태 echo 화**: orchestrator 가 `--summary-state` / `--update` 로 한 줄만 echo — main 이 `_retry_state.json` JSON 자체를 Read 하지 않음.
+5. **idempotency**: resolution-applier 는 디스크 상태(_resolution_state.json + git log + RESOLUTION.md)가 진실의 원천. 중단 후 재호출도 안전.
 
 ---
 
@@ -359,7 +392,8 @@ sequenceDiagram
     Main->>Main: pending 5명만 재호출
     Main->>Main: 모두 success
     Main->>Main: code-review-summary 호출
-    Main-->>User: SUMMARY 1-2문단
+    Main->>Main: resolution-applier 호출 (자동 후속)
+    Main-->>User: SUMMARY + RESOLUTION 1-2문단
     Note over LoopRunner: pending 비면 ScheduleWakeup 미호출 → 자연 종료
 ```
 
@@ -369,6 +403,7 @@ sequenceDiagram
 - **세션 디렉토리 영속화**: `--resume <session_dir>` 인자로 같은 세션 재진입. `_retry_state.json` 이 상태 SSOT.
 - **RESET_HINT 최대값**: 여러 reviewer 의 hint 중 가장 큰 값 사용 → 가장 늦게 풀리는 한도 기준 안전 마진.
 - **fatal 은 재시도 안 함**: rate_limit / network 만 pending 유지.
+- **resolution-applier 도 동일 재시도 흐름**: idempotency 로 중단 후 재진입도 안전 (디스크 상태가 진실).
 
 ---
 
@@ -416,11 +451,13 @@ flowchart LR
 - 안내가 가리키는 canonical 복구 명령: `.claude/tools/ensure-worktree.sh <task_name>` → 출력 마지막 줄 `cd ...` 실행.
 - **e2e 자동 격리**: `make e2e-*` 가 worktree dir basename 으로 compose project name 도출 → 컨테이너·볼륨·network 가 worktree 별 분리. 여러 worktree 가 동시에 e2e 돌려도 충돌 없음.
 
+상세: [`.claude/docs/worktree-policy.md`](.claude/docs/worktree-policy.md).
+
 ---
 
-## 8. Sub-agent 목록 (총 27개)
+## 8. Sub-agent 목록 (총 28개)
 
-### 8.1 Code Review (13 reviewers + 1 router + 1 summary)
+### 8.1 Code Review (13 reviewers + 1 router + 1 summary + 1 resolution-applier)
 
 | 분야 | sub-agent | 핵심 관점 |
 | --- | --- | --- |
@@ -439,6 +476,7 @@ flowchart LR
 | API 계약 | `api-contract-reviewer` | 하위 호환성 · 응답 포맷 |
 | 라우팅 | `review-router` (haiku) | 변경 성격에 따라 reviewer 선별 |
 | 통합 | `code-review-summary` | 결과 통합 → `SUMMARY.md` |
+| **자동 후속** | `resolution-applier` | **분류·코드 fix·spec draft·e2e·RESOLUTION 모두 격리 ctx 에서 수행. 사용자 결정 필요한 순간만 main 으로 ESCALATE** |
 
 ### 8.2 Consistency Check (5 checkers + 1 summary)
 
@@ -462,6 +500,8 @@ flowchart LR
 | `integration-risk-summary` | 4 결과 통합 + BLOCK 결정 |
 | `merge-conflict-resolver` | 단일 conflict 의 unified diff patch 제안 |
 
+모든 sub-agent 의 공통 호출 규약(prompt_file/output_file/STATUS 라인·재시도 정책)은 [`.claude/docs/subagent-call-contract.md`](.claude/docs/subagent-call-contract.md) 가 SSOT — agent definition 들은 한 줄로 인용만.
+
 ---
 
 ## 9. 강점 (Strengths)
@@ -471,19 +511,22 @@ flowchart LR
 - Critical 발견 시 `BLOCK: YES` 가 `SUMMARY.md` 상단에 박혀, Main Claude 가 즉시 호출자(planner / developer)를 멈춥니다.
 - "수정 후 검토" 가 아니라 **"검토 후 수정"** — 잘못된 spec 이 디스크에 반영된 뒤 되돌리는 비용을 회피.
 
-### 9.2 닫힌 루프 (Review → Fix → e2e → RESOLUTION)
-- `/ai-review` 가 단순 조언이 아니라 **자동 fix + 로컬 e2e 의무 실행 + RESOLUTION.md 작성** 까지 일관 처리.
+### 9.2 닫힌 루프 (Review → Fix → e2e → RESOLUTION) — 격리 sub-agent 위에서
+- `/ai-review` 가 단순 조언이 아니라 **resolution-applier sub-agent 의 격리 컨텍스트 안에서 자동 fix + 로컬 e2e 의무 실행 + RESOLUTION.md 작성** 까지 일관 처리.
+- main ctx 누적이 격리 sub-agent 로 옮겨가서 한 사이클당 40-130K 토큰 절감.
 - `[skip-e2e]` · "CI 가 처리할 것" · "단위 테스트로 충분" 모두 **금지** → 실패가 production 으로 새지 않습니다.
-- e2e 실패 최대 3회 자동 재시도 → 일시적 flake 는 자가 회복.
+- e2e 실패 최대 3회 자동 재시도 → 일시적 flake 는 자가 회복. 3회 실패 시 `ESCALATE=e2e-fail-3x` 로 main escalate.
 
 ### 9.3 Main 컨텍스트 보호 (Sub-agent 격리)
-- 13개 reviewer 의 결과가 main 토큰 윈도우를 잠식하지 않습니다 (한 줄 STATUS 만 반환).
+- 13개 reviewer 의 결과 + resolution-applier 의 fix·e2e 로그가 main 토큰 윈도우를 잠식하지 않습니다 (한 줄 STATUS 만 반환).
 - Main 은 짧은 결정 로직(분류·재시도·schedule) 만 담당 → 긴 세션에서도 안정.
-- 결과는 모두 파일(`output_file`) 에 박혀 사후 감사 가능.
+- 결과는 모두 파일(`output_file` · `RESOLUTION.md` · `_resolution_log.md`) 에 박혀 사후 감사 가능.
+- TEST WORKFLOW 의 lint/unit/build/e2e 도 `.claude/tools/run-test.sh` wrapper 가 출력을 truncate — 통과 시 한 줄, 실패 시 30줄만 main 으로.
 
 ### 9.4 사용량 한도 처리 자동화
 - 한도가 걸려도 사용자가 다른 일을 할 수 있음 (`ScheduleWakeup` + `/loop dynamic mode`).
 - `_retry_state.json` 으로 세션 상태가 영속화 → 실패한 agent 만 다시 호출, 성공한 결과는 보존.
+- resolution-applier 도 `_resolution_state.json` 으로 idempotency 보장 — 중간 한도에 걸려도 재진입 시 처리된 SUMMARY 항목 자동 skip.
 - RESET_HINT 최대값 전략으로 over-polling 방지.
 
 ### 9.5 Worktree 기반 병렬 작업
@@ -491,14 +534,16 @@ flowchart LR
 - main worktree 는 통합·릴리스 전용 → default branch 가 "merge-only" 보장.
 - 4-layer 자동 차단(hook A · B · C · D) 으로 모델 자율 준수에 의존하지 않음. A·C 는 차단, B·D 는 안내.
 
-### 9.6 단일 진실 원칙 (Spec SSOT)
+### 9.6 단일 진실 원칙 (Spec SSOT + .claude/docs/ SSOT)
 - 모든 결정이 `spec/<영역>/*.md` 에 모임 (Overview · 본문 · Rationale 3섹션).
-- 옛 PRD · ADR · memory 폴더가 모두 `spec/` 으로 흡수 → "결정의 출처가 어디였더라" 문제 해소.
+- 옛 PRD · ADR · memory 폴더가 모두 `spec/` 으로 흡수.
+- 하네스 운영 규칙은 CLAUDE.md (78줄) + `.claude/docs/` 4개 doc 으로 분리 — 호출 시에만 lazy load 되어 매 turn ctx 부담 ≈ 5-7K 토큰 절감.
 - 결정 변경 시 항상 Rationale 에 폐기된 대안 명시 → `rationale-continuity-checker` 가 재도입 검출.
 
 ### 9.7 감사 가능성 (Audit Trail)
 - 모든 검토 세션이 `review/{code,consistency,merge}/<YYYY>/<MM>/<DD>/<hh>_<mm>_<ss>/` 에 보존.
-- `SUMMARY.md` + 에이전트별 결과 + `_retry_state.json` 으로 **어떤 판정으로 PR 이 나갔는지** 재현 가능.
+- `SUMMARY.md` + 에이전트별 결과 + `_retry_state.json` + (ai-review) `_resolution_state.json` + `_resolution_log.md` 로 **어떤 판정과 어떤 자동 수정으로 PR 이 나갔는지** 재현 가능.
+- 자동 fix commit 메시지에 `SUMMARY#<n>` 인용 강제 → SUMMARY 항목 ↔ commit 매핑이 git log 만으로 추적 가능.
 
 ### 9.8 Router 로 비용 최적화
 - haiku 기반 `review-router` 가 변경 성격을 보고 13개 중 필요한 reviewer 만 선별.
@@ -509,7 +554,7 @@ flowchart LR
 ## 10. 약점 (Weaknesses) · 주의점
 
 ### 10.1 학습 곡선이 가파르다
-- CLAUDE.md (≈22KB) + PROJECT.md + SKILL.md 5종 + sub-agent 27종의 규약을 이해해야 효과 발휘.
+- CLAUDE.md (78줄, lean) + `.claude/docs/` 4개 doc + PROJECT.md + SKILL.md 5종 + sub-agent 28종의 규약을 이해해야 효과 발휘.
 - 신규 합류자는 "왜 main 에서 편집이 안 되지?" 같은 한 hook 한 hook 에 막힘.
 - **완화책**: 본 문서 같은 큰 그림 문서 + 1:1 페어 진입.
 
@@ -520,17 +565,18 @@ flowchart LR
 - 멀티 테넌트 (여러 개발자가 같은 Anthropic 키 공유) 환경에서 더 심각.
 
 ### 10.3 자동 후속 흐름의 폭주 위험
-- `/ai-review` 8단계 자동 흐름이 매우 공격적 — DB 마이그레이션 · 외부 API 계약 변경 같은 영역에 자동 수정이 들어가면 사고 위험.
-- 안전 가드(8.7) 가 있지만 "의미 변경 큰" 판단이 모델 자체에 의존.
-- **완화책**: 안전 가드의 화이트/블랙리스트를 명시적으로 PROJECT.md 에 박는 작업이 필요.
+- resolution-applier 의 ESCALATE 매트릭스(6분기)가 안전 가드 역할 — `sensitive-fix` 분기로 DB 마이그레이션 · 외부 API 계약 · 인증 흐름 변경은 자동 수정 안 함.
+- 다만 "민감 변경" 판정 자체가 모델 자체에 의존 — false-negative (자동 수정한 후 사고) 위험은 0 이 아님.
+- **완화책**: 화이트/블랙리스트를 PROJECT.md 에 명시적으로 박는 작업 권장.
 
 ### 10.4 세션 디렉토리 누적
 - 모든 검토가 `review/{code,consistency,merge}/<YYYY>/<MM>/<DD>/<hh>_<mm>_<ss>/` 에 박혀 누적.
 - 옛 flat 경로 폭주 문제로 nested ISO 로 전환했지만, 장기 보존 정책이 정의되어 있지 않음.
+- 추가로 `_test_logs/<stage>-<ts>.log` 가 누적 — `.gitignore` 처리 + 주기적 청소 필요 (`find _test_logs -mtime +7 -delete`).
 - 일정 시점 이전 데이터를 cold storage 로 이관하는 자동화가 없음.
 
 ### 10.5 e2e 의무가 환경 의존
-- 로컬에서 Docker compose 가 돌아야 e2e 통과 → 환경이 안 맞으면 자동 흐름 중단.
+- 로컬에서 Docker compose 가 돌아야 e2e 통과 → 환경이 안 맞으면 `ESCALATE=infra` 로 자동 흐름 중단.
 - 화이트리스트(`PROJECT.md §e2e 면제 화이트리스트`) 가 좁아, 회색 지대(테스트만 변경, helper 한 줄) 도 e2e 필수.
 - 빠른 실험·prototyping 사이클에는 부담.
 
@@ -546,28 +592,30 @@ flowchart LR
 ### 10.8 Spec / 코드 동기화는 여전히 인간 책임
 - developer 가 "spec 모호 / 부족" 을 발견하면 멈추고 planner 로 위임해야 하는데, 모델이 "현장에서 적당히 결정" 하는 fallback 이 없음 (의도된 설계지만 흐름 단절).
 - spec 변경이 잦은 단계에서는 planner ↔ developer 핑퐁이 자주 발생.
+- resolution-applier 의 `ESCALATE=spec` 분기로 자동 chain 이 일부 완화하지만, 큰 spec 결정은 여전히 사용자 결정 필요.
 
 ### 10.9 정책 위반 검출의 한계
 - 일관성 checker 가 검출하는 것은 spec/plan 의 위배 — **코드와 spec 의 괴리** 는 사후 `/ai-review` 의 `requirement-reviewer` 한 종에만 의존.
 - spec 이 변경됐는데 코드가 따라가지 않은 경우의 자동 검출이 약함.
 
 ### 10.10 진입 비용 vs 효익의 비대칭
-- 1-2시간짜리 작은 task 에는 (consistency-check + worktree + ai-review + e2e + RESOLUTION) 오버헤드가 큼.
+- 1-2시간짜리 작은 task 에는 (consistency-check + worktree + ai-review + resolution-applier + e2e + RESOLUTION) 오버헤드가 큼.
 - 작은 변경에는 일부 단계를 우회하고 싶은 유혹이 있는데, 우회 흔적이 코드 곳곳에 남으면 정책 자체의 권위가 약해짐.
 
 ---
 
-## 11. 프로젝트별 설정 파일 — `.claude.project.json` · `PROJECT.md`
+## 11. 프로젝트별 설정 파일 — `.claude.project.json` · `PROJECT.md` · `.claude/test-stages.sh`
 
-본 하네스는 generic 화되어 있어, **하나의 `.claude/` 골격으로 여러 저장소에서 재사용** 할 수 있도록 설계되어 있습니다. 저장소마다 다른 두 가지(폴더 배치 / 명령·매핑)는 외부 두 파일에 분리됩니다.
+본 하네스는 generic 화되어 있어, **하나의 `.claude/` 골격으로 여러 저장소에서 재사용** 할 수 있도록 설계되어 있습니다. 저장소마다 다른 세 가지는 외부 파일에 분리됩니다.
 
 | 파일 | 형식 | 읽는 주체 | 역할 |
 | --- | --- | --- | --- |
 | `.claude.project.json` | JSON | Python orchestrator (`_lib/project_config.py`) | **경로(폴더 위치) 재배치만** 담당. 키 누락 시 모두 기본값 |
 | `PROJECT.md` | Markdown | Main Claude · Skill 워크플로 (`developer/SKILL.md` 등) | **명령·매핑·도메인 어휘** 의 단일 진실. 하네스 generic skeleton 이 본 문서를 참조 |
-| `CLAUDE.md` | Markdown | Main Claude · 모든 sub-agent | **공통 규약·정책** (하네스 자체. 프로젝트 가로질러 동일) |
+| `.claude/test-stages.sh` | Bash | `.claude/tools/run-test.sh` | **TEST WORKFLOW 4단계 실제 명령**. `cmd_lint`/`cmd_unit`/`cmd_build`/`cmd_e2e` 함수 정의 |
+| `CLAUDE.md` (+ `.claude/docs/`) | Markdown | Main Claude · 모든 sub-agent | **공통 규약·정책** (하네스 자체. 프로젝트 가로질러 동일) |
 
-> 이 셋을 분리한 이유: `CLAUDE.md` 는 하네스 자체 (모든 프로젝트 동일), `PROJECT.md` 는 사람이 결정해야 하는 프로젝트별 컨벤션, `.claude.project.json` 은 코드가 자동으로 읽는 경로 매핑. 책임이 다르면 파일도 다르다.
+> 이 셋을 분리한 이유: `CLAUDE.md` 는 하네스 자체 (모든 프로젝트 동일), `PROJECT.md` 는 사람이 결정해야 하는 프로젝트별 컨벤션, `.claude.project.json` 은 코드가 자동으로 읽는 경로 매핑, `.claude/test-stages.sh` 는 wrapper 가 source 하는 실행 명령. 책임이 다르면 파일도 다르다.
 
 ---
 
@@ -635,9 +683,9 @@ flowchart LR
 **목적**: 하네스 generic skeleton 이 "이 저장소에서 코드를 어떻게 빌드·테스트하고, 어떤 문서를 함께 갱신해야 하는지" 알아야 동작한다. `PROJECT.md` 는 그 **프로젝트별 매핑·명령·규약의 단일 진실**.
 
 **누가 읽는가**: Main Claude 가 SKILL.md 단계마다 본 문서를 참조. 특히:
-- `developer/SKILL.md` 의 TEST WORKFLOW (4단계 명령)
+- `developer/SKILL.md` 의 TEST WORKFLOW (4단계 명령 — 실제 실행은 `.claude/test-stages.sh` 가 담당)
 - `developer/SKILL.md` §4 DOCUMENTATION 업데이트 단계
-- `/ai-review` 자동 후속 흐름 8.4 (로컬 e2e 명령)
+- `/ai-review` 자동 후속 흐름 — resolution-applier 가 e2e 면제 화이트리스트 참조
 - `/consistency-check` 의 `--impl-prep` 모드
 
 > **PROJECT.md 가 없으면 하네스 채택이 미완** — `developer/SKILL.md` 가 본 파일을 명시적 dependency 로 잡고 있다 ("PROJECT.md 가 없으면 본 하네스 채택이 미완 — 작업 전 작성을 요청한다").
@@ -647,7 +695,7 @@ flowchart LR
 | § | 섹션 | 목적 / 누가 읽는가 |
 | --- | --- | --- |
 | 1 | **코드베이스 구조** | 어떤 폴더에 어떤 스택. 변경 PR 의 영향 범위 추정. SKILL.md 의 "코드베이스" 언급은 여기를 참조 |
-| 2 | **빌드·린트·테스트 명령** | TEST WORKFLOW 의 lint / unit / build / e2e **각 단계의 실제 명령**. 매핑이 없으면 자동 흐름이 모드 |
+| 2 | **빌드·린트·테스트 명령** | TEST WORKFLOW 의 lint / unit / build / e2e **각 단계의 실제 명령**. `.claude/test-stages.sh` 에 같은 명령을 함수로 박는다 |
 | 3 | **e2e 면제 화이트리스트** | "이 변경 set 만이면 e2e 안 돌려도 된다" 의 부분집합 규칙. **임의 확대 금지** — 추가는 PR 로 본 문서 갱신 |
 | 4 | **변경 유형 → 갱신 위치 매핑** | 코드 변경마다 함께 갱신해야 할 문서·번역·swagger·migration 테이블. 누락 검출 가드 |
 | 5 | **e2e 테스트 작성 가이드** | 언제 e2e 를 작성하는가, 파일 위치·명명, 패턴, 알려진 우회 |
@@ -670,22 +718,48 @@ flowchart LR
 
 ---
 
-### 11.3 다른 프로젝트 적용 시 작성 순서
+### 11.3 `.claude/test-stages.sh` — TEST WORKFLOW 실행 명령
+
+**목적**: `.claude/tools/run-test.sh` wrapper 가 source 하는 함수 집합. 통과 시 stdout 한 줄, 실패 시 한 줄 + 마지막 30줄 + 실패 마커 grep — main ctx 폭주 방지.
+
+**누가 읽는가**: `.claude/tools/run-test.sh` (bash). developer SKILL.md 와 resolution-applier sub-agent 가 호출 의무.
+
+**파일은 그냥 함수 정의**:
+
+```bash
+cmd_lint()  { cd codebase/backend && npm run lint; }
+cmd_unit()  { cd codebase/backend && npm test; }
+cmd_build() { cd codebase/backend && npm run build; }
+cmd_e2e()   { make e2e-test; }
+```
+
+**작성 시 주의점**
+
+- **PROJECT.md §빌드·린트·테스트 명령** 표의 명령과 1:1 일치해야 함. 두 곳에서 SSOT 가 갈리면 자동 흐름이 깨짐.
+- 함수가 직접 exit code 를 반환하도록 — wrapper 가 그 값으로 PASS/FAIL 판정.
+- 함수 안에서 `set -e` 같은 strict mode 는 wrapper 가 이미 잡고 있으니 필요 없음.
+- 채택 시 `cp .claude/test-stages.sh.example .claude/test-stages.sh` 로 시작.
+
+---
+
+### 11.4 다른 프로젝트 적용 시 작성 순서
 
 ```mermaid
 flowchart TD
     A["1. 하네스 clone<br/>(.claude/ · .githooks/ · CLAUDE.md)"] --> B["2. .claude.project.json 작성<br/>(폴더가 기본값과 다르면)"]
     B --> C["3. PROJECT.md 작성<br/>(필수 6섹션)"]
-    C --> D["4. make setup-githooks<br/>(pre-commit 활성화)"]
-    D --> E["5. 첫 worktree 에서<br/>가벼운 task 로 dry-run<br/>(/ai-review · /consistency-check)"]
-    E --> F["6. 채택 완료<br/>(팀 전파)"]
+    C --> C2["4. .claude/test-stages.sh 작성<br/>(cmd_lint/unit/build/e2e)"]
+    C2 --> D["5. make setup-githooks<br/>(pre-commit 활성화)"]
+    D --> E["6. 첫 worktree 에서<br/>가벼운 task 로 dry-run<br/>(/ai-review · /consistency-check)"]
+    E --> F["7. 채택 완료<br/>(팀 전파)"]
 
     style A fill:#e0f2ff,stroke:#06c
     style C fill:#fff5b0,stroke:#c80
+    style C2 fill:#fff5b0,stroke:#c80
     style F fill:#dfd,stroke:#080
 ```
 
-가장 비중이 큰 단계는 **§3 PROJECT.md 작성**. 6개 섹션 모두 누락 없이 채워야 자동 흐름이 안전하게 돈다.
+가장 비중이 큰 단계는 **§3 PROJECT.md 작성**. 6개 섹션 모두 누락 없이 채워야 자동 흐름이 안전하게 돈다. **§4 test-stages.sh** 는 PROJECT.md 의 명령을 함수로 옮기는 단순 작업.
 
 ---
 
@@ -693,12 +767,13 @@ flowchart TD
 
 다른 프로젝트에 본 하네스를 도입할 때:
 
-1. **CLAUDE.md + PROJECT.md 작성**: 공통 규약 + 프로젝트별 매핑(빌드/테스트 명령, e2e 화이트리스트 등).
-2. **Worktree 정책 + 4-layer hook** 활성화 (`make setup-githooks`). A·B·D 는 `.claude/settings.json` 등록만으로 자동 동작, C 는 `make setup-githooks` 후 활성화.
-3. **Skills 도입 순서**: `developer` → `consistency-checker` → `code-review-agents` → `project-planner` → `merge-coordinator`.
-4. **e2e 자동 격리** (compose project name = worktree basename) 설정.
-5. **/loop + ScheduleWakeup** 사용 컨벤션 사내 공유.
-6. **review 폴더 보존 정책** 결정 (예: 90일 후 cold storage).
+1. **CLAUDE.md (+ `.claude/docs/`) + PROJECT.md 작성**: 공통 규약 + 프로젝트별 매핑(빌드/테스트 명령, e2e 화이트리스트 등).
+2. **`.claude/test-stages.sh` 작성**: PROJECT.md 의 명령을 함수로 박음.
+3. **Worktree 정책 + 4-layer hook** 활성화 (`make setup-githooks`). A·B·D 는 `.claude/settings.json` 등록만으로 자동 동작, C 는 `make setup-githooks` 후 활성화.
+4. **Skills 도입 순서**: `developer` → `consistency-checker` → `code-review-agents` → `project-planner` → `merge-coordinator`.
+5. **e2e 자동 격리** (compose project name = worktree basename) 설정.
+6. **/loop + ScheduleWakeup** 사용 컨벤션 사내 공유.
+7. **review 폴더 보존 정책 + `_test_logs/` 정리 정책** 결정 (예: 90일 후 cold storage).
 
 ---
 
@@ -706,14 +781,19 @@ flowchart TD
 
 | 항목 | 경로 |
 | --- | --- |
-| 공통 규약 | `CLAUDE.md` |
+| 공통 규약 (짧은 SSOT) | `CLAUDE.md` |
+| Worktree 정책 상세 | `.claude/docs/worktree-policy.md` |
+| Plan 라이프사이클 | `.claude/docs/plan-lifecycle.md` |
+| Sub-agent 호출 규약 (공통) | `.claude/docs/subagent-call-contract.md` |
+| Test wrapper 사용법 | `.claude/docs/test-wrapper.md` |
 | 프로젝트별 매핑 | `PROJECT.md` |
 | 기획자 워크플로 | `.claude/skills/project-planner/SKILL.md` |
 | 개발자 워크플로 | `.claude/skills/developer/SKILL.md` |
 | 사전 검토 | `.claude/skills/consistency-checker/SKILL.md` |
-| 사후 리뷰 | `.claude/skills/code-review-agents/SKILL.md` |
+| 사후 리뷰 + 자동 후속 위임 | `.claude/skills/code-review-agents/SKILL.md` |
+| 자동 후속 흐름 (resolution-applier) | `.claude/agents/resolution-applier.md` |
 | 다중 통합 | `.claude/skills/merge-coordinator/SKILL.md` |
-| Sub-agent 정의 | `.claude/agents/*.md` |
+| Sub-agent 정의 (28종) | `.claude/agents/*.md` |
 | Slash commands | `.claude/commands/{ai-review,consistency-check,merge-coordinate}.md` |
 | Hooks | `.claude/hooks/`, `.githooks/pre-commit` |
 
@@ -723,3 +803,4 @@ flowchart TD
 > 1. "Sub-agent 도 결국 같은 Anthropic 키 한도를 먹는 것 아닌가?" → 맞음. 단 context window 격리 효과 + 병렬성으로 시간 단축. 한도 자체는 `/loop` 로 완화.
 > 2. "왜 외부 SDK 호출을 막았나?" → Anthropic의 요금제 정책 변경으로 `Agent SDK`, `claude -p` 사용이 별도의 크레딧에서 차감.
 > 3. "Critical 발견인데 사용자가 무시하고 진행하면?" → 차단은 자동, 우회는 수동. `BYPASS_DEFAULT_BRANCH_GUARD=1` 처럼 의식적 결정만 허용.
+> 4. "resolution-applier 가 잘못 자동 수정하면?" → ESCALATE=sensitive-fix 매트릭스가 1차 가드 (DB 마이그레이션·외부 API·인증 등 위험 영역은 자동 수정 안 함). 그 외에는 commit 메시지의 `SUMMARY#<n>` 인용으로 추적 → revert. 안전망이 약하다 싶으면 PROJECT.md 에 화이트/블랙리스트를 명시.

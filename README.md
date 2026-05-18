@@ -17,24 +17,33 @@
 ```
 ./                                    # 하네스 저장소 루트 (본 repo 자체가 템플릿)
 ├── .claude/                          # 하네스 본체 (모두 그대로 복사)
-│   ├── agents/                       # 27 sub-agents (13 reviewer + router + summary +
+│   ├── agents/                       # 28 sub-agents (13 reviewer + router + summary +
 │   │                                 #                5 checker + checker summary +
-│   │                                 #                4 analyzer + analyzer summary + resolver)
+│   │                                 #                4 analyzer + analyzer summary + resolver +
+│   │                                 #                resolution-applier 자동 fix sub-agent)
 │   ├── commands/                     # /ai-review · /consistency-check · /merge-coordinate
-│   ├── hooks/                        # default branch 편집 차단 + bash 리마인더 + prompt 리마인더
+│   ├── docs/                         # 공유 SSOT 문서 (lazy load — 호출 시에만 Read)
+│   │   ├── worktree-policy.md        #   Worktree 정책 + Enforcement 4-layer 상세
+│   │   ├── plan-lifecycle.md         #   plan/in-progress ↔ complete 라이프사이클
+│   │   ├── subagent-call-contract.md #   모든 sub-agent 의 공통 호출 규약·STATUS·재시도
+│   │   └── test-wrapper.md           #   .claude/tools/run-test.sh 사용법
+│   ├── hooks/                        # default branch 편집 차단 + bash·prompt 리마인더
 │   │   ├── _lib/branch_guard.py      #   3 hook 이 공유하는 단일 판정 모듈
 │   │   ├── guard_default_branch_edit.py    # PreToolUse (Write/Edit/MultiEdit/NotebookEdit) — 차단
 │   │   ├── guard_default_branch_bash.py    # PreToolUse (Bash, mutating) — 세션당 1회 리마인더
 │   │   └── guard_default_branch_prompt.py  # UserPromptSubmit — 작업성 키워드 매칭 시 리마인더
-│   ├── skills/                       # 5개 핵심 skill + _lib + 보조 skill
-│   │   ├── _lib/                     #   공유 라이브러리 (project_config.py 포함)
+│   ├── skills/                       # 5개 핵심 skill + _lib
+│   │   ├── _lib/                     #   공유 라이브러리 (project_config.py)
 │   │   ├── developer/                #   구현/TDD 워크플로
 │   │   ├── project-planner/          #   기획/Spec 워크플로
 │   │   ├── consistency-checker/      #   사전 일관성 검토 (5 checker 병렬)
-│   │   ├── code-review-agents/       #   사후 코드 리뷰 (13 reviewer + router + summary)
+│   │   ├── code-review-agents/       #   사후 코드 리뷰 (13 reviewer + router + summary
+│   │   │                             #                  + resolution-applier 자동 후속)
 │   │   └── merge-coordinator/        #   다중 PR 통합 (4 analyzer + summary + resolver)
 │   ├── tools/
-│   │   └── ensure-worktree.sh        # branch guard 메시지가 가리키는 canonical worktree 생성 헬퍼
+│   │   ├── ensure-worktree.sh        #   canonical worktree 생성 헬퍼
+│   │   └── run-test.sh               #   TEST WORKFLOW stage 출력 truncation wrapper
+│   ├── test-stages.sh.example        # 프로젝트가 cp 후 cmd_lint/unit/build/e2e 함수 채움
 │   ├── settings.json                 # PreToolUse (Write/Edit/Bash) + UserPromptSubmit hook 등록
 │   ├── statusline.sh                 # 터미널 상태줄 (선택)
 │   └── README.md                     # 하네스 자체 안내
@@ -42,17 +51,18 @@
 │   └── pre-commit                    # git commit 단계 default branch 차단 (4-layer 중 C)
 ├── scripts/
 │   └── setup-githooks.sh             # core.hooksPath 등록 (clone 후 1회)
-├── CLAUDE.md                         # 공통 규약 (프로젝트 가로질러 동일)
+├── CLAUDE.md                         # 공통 규약 (78줄. 상세는 .claude/docs/ 참고)
 ├── PROJECT.md                        # 프로젝트별 매핑 (채택 시 작성 필수)
 ├── .claude.project.json              # 폴더 경로 매핑 (기본값과 같으면 생략 가능)
 ├── Makefile                          # setup-githooks 타겟 (프로젝트 타겟은 채택 시 추가)
-├── OVERVIEW.md               # 하네스 전체 구조 + 강점/약점 + 라이프사이클
+├── OVERVIEW.md                       # 하네스 전체 구조 + 강점/약점 + 라이프사이클
 └── README.md                         # 본 문서
 ```
 
 ### 제외된 항목 (의도적)
 
 - `.claude/settings.local.json` — 사용자별 로컬 override (committed 하지 않음).
+- `.claude/test-stages.sh` — 프로젝트가 채택 시 example 에서 cp 후 자기 명령으로 채움 (committed 함, 단 .example 만 본 템플릿에 포함).
 
 ---
 
@@ -69,7 +79,7 @@
 
 ---
 
-## 3. 초기 세팅 — 10단계
+## 3. 초기 세팅 — 11단계
 
 ```mermaid
 flowchart TD
@@ -77,13 +87,15 @@ flowchart TD
     S2 --> S3["3. PROJECT.md 작성<br/>(필수 6섹션)"]
     S3 --> S4["4. CLAUDE.md 검토 / 조정<br/>(보통 그대로 OK)"]
     S4 --> S5["5. Makefile 에<br/>프로젝트 타겟 추가"]
-    S5 --> S6["6. make setup-githooks<br/>(pre-commit 활성화)"]
-    S6 --> S7["7. .gitignore 갱신<br/>(review/ · .claude/worktrees/)"]
-    S7 --> S8["8. 폴더 스켈레톤 생성<br/>(spec/ · plan/ · codebase/)"]
-    S8 --> S9["9. 첫 worktree dry-run<br/>(가벼운 task)"]
-    S9 --> S10["10. 팀 전파"]
+    S5 --> S5a["6. .claude/test-stages.sh<br/>작성 (run-test.sh 가 source)"]
+    S5a --> S6["7. make setup-githooks<br/>(pre-commit 활성화)"]
+    S6 --> S7["8. .gitignore 갱신<br/>(review/ · .claude/worktrees/<br/>+ _test_logs/)"]
+    S7 --> S8["9. 폴더 스켈레톤 생성<br/>(spec/ · plan/ · codebase/)"]
+    S8 --> S9["10. 첫 worktree dry-run<br/>(가벼운 task)"]
+    S9 --> S10["11. 팀 전파"]
 
     style S3 fill:#fff5b0,stroke:#c80
+    style S5a fill:#fff5b0,stroke:#c80
     style S6 fill:#fff5b0,stroke:#c80
     style S10 fill:#dfd,stroke:#080
 ```
@@ -111,7 +123,7 @@ cp <harness-repo>/.claude.project.json     .   # 필요시 (단계 2 참고)
 cp <harness-repo>/Makefile             .   # 또는 통합
 ```
 
-> **B. 이미 git repo 라면** `git add` 전에 단계 2-7 까지 마치고 한 PR (`chore(harness): adopt Claude Code harness`) 로 묶어 올린다.
+> **B. 이미 git repo 라면** `git add` 전에 단계 2-8 까지 마치고 한 PR (`chore(harness): adopt Claude Code harness`) 로 묶어 올린다.
 
 ### 단계 2 — `.claude.project.json` 작성 (선택)
 
@@ -164,11 +176,13 @@ PROJECT.md 끝의 **작성 체크리스트** 6개 항목을 모두 `[x]` 처리 
 
 ### 단계 4 — `CLAUDE.md` 검토
 
-공통 규약 (worktree 정책 · skill 체계 · 외부 LLM 호출 금지 등) 으로, **보통 그대로 사용**. 본 저장소만의 특수 사정이 있으면 다음 절만 조정:
+공통 규약 (worktree 정책 · skill 체계 · 외부 LLM 호출 금지 등) 의 핵심 SSOT. 78줄로 압축되어 있고, 상세 운영 규칙은 `.claude/docs/` 하위에 분리되어 있습니다. **보통 그대로 사용**. 본 저장소만의 특수 사정이 있으면 다음만 조정:
 
 - "## 폴더 구조" — `.claude.project.json` 의 `code_areas` 와 일관성 맞춤
 - "## 패키지 매니저" — npm / yarn / pnpm 중 채택한 것으로 통일
 - "## 외부 LLM 호출 정책" — 변경 금지 (요금제 정책)
+
+`.claude/docs/` 하위 4개 doc 도 같이 복사된다 — 별도 조정 보통 불필요.
 
 ### 단계 5 — Makefile 에 프로젝트 타겟 추가
 
@@ -194,7 +208,27 @@ e2e-test:
 
 **Worktree 별 e2e 자동 격리** 패턴 (강력 권장): docker compose project name 을 worktree dir basename 으로 도출하면 여러 worktree 가 e2e 를 동시에 돌려도 충돌 없음.
 
-### 단계 6 — git hook 활성화
+### 단계 6 — `.claude/test-stages.sh` 작성
+
+`.claude/tools/run-test.sh` 가 TEST WORKFLOW 의 lint / unit / build / e2e 4단계 출력을 truncate 하기 위해 source 하는 파일. 통과 시 stdout 한 줄 (≤100 토큰), 실패 시 한 줄 + 마지막 30줄 + 실패 마커 grep (≤2K 토큰). 전체 로그는 디스크 (`_test_logs/<stage>-<ts>.log`) 보존.
+
+```bash
+cp .claude/test-stages.sh.example .claude/test-stages.sh
+$EDITOR .claude/test-stages.sh
+```
+
+채워야 할 함수 4개:
+
+```bash
+cmd_lint()  { cd codebase/backend && npm run lint; }
+cmd_unit()  { cd codebase/backend && npm test; }
+cmd_build() { cd codebase/backend && npm run build; }
+cmd_e2e()   { make e2e-test; }
+```
+
+상세: [`.claude/docs/test-wrapper.md`](.claude/docs/test-wrapper.md).
+
+### 단계 7 — git hook 활성화
 
 ```bash
 make setup-githooks
@@ -209,9 +243,9 @@ git config --get core.hooksPath
 
 > `core.hooksPath` 는 **per-clone 설정** (git 전체 sync 대상 아님) — 모든 contributor 가 clone 후 1회 실행해야 한다. CI 에서는 불필요 (CI 에는 commit 단계 없음).
 
-### 단계 7 — `.gitignore` 갱신
+### 단계 8 — `.gitignore` 갱신
 
-다음 두 경로를 추가 (review 산출물은 commit 하지만 worktree 는 무시):
+다음 경로들을 추가:
 
 ```gitignore
 # Claude Code worktrees — 일시 작업 공간
@@ -219,11 +253,14 @@ git config --get core.hooksPath
 
 # 사용자별 settings (선택 — 팀 공유 안 하려면)
 .claude/settings.local.json
+
+# 테스트 출력 wrapper 의 로그 (디스크 보존, 누적 정리 필요)
+_test_logs/
 ```
 
 > `review/code/`, `review/consistency/`, `review/merge/` 는 기본적으로 **commit 대상** — 감사 흔적이며, 프로젝트 성격에 따라 추가하세요.
 
-### 단계 8 — 폴더 스켈레톤 생성
+### 단계 9 — 폴더 스켈레톤 생성
 
 ```bash
 mkdir -p spec/conventions
@@ -240,7 +277,7 @@ echo "# plan/in-progress/ — 진행 중 plan" > plan/in-progress/README.md
 echo "# plan/complete/ — 완료 plan" > plan/complete/README.md
 ```
 
-### 단계 9 — 첫 worktree dry-run
+### 단계 10 — 첫 worktree dry-run
 
 세팅이 끝났는지 가벼운 task 로 확인:
 
@@ -257,6 +294,9 @@ echo "test" >> README.md   # 직접 편집은 안 막힘 (Claude Code 의 Write 
 # (c) worktree 로 돌아가 가벼운 task 진행
 cd .claude/worktrees/harness-smoke-test-*
 # Claude Code 안에서: /ai-review (변경 없으면 minimal SUMMARY 종료)
+
+# (d) test wrapper 확인
+.claude/tools/run-test.sh lint  # PASS 시 한 줄. _test_logs/ 에 로그 보존
 ```
 
 확인 포인트:
@@ -264,10 +304,11 @@ cd .claude/worktrees/harness-smoke-test-*
 - [ ] `git commit` (main 워크트리, default branch) 차단됨
 - [ ] `.claude/worktrees/*` 에서는 정상 동작
 - [ ] `/ai-review` 가 `review/code/<YYYY>/<MM>/<DD>/<hh>_<mm>_<ss>/` 디렉토리 생성
+- [ ] `.claude/tools/run-test.sh lint` 가 stdout 한 줄 + 로그파일 생성
 
-### 단계 10 — 팀 전파
+### 단계 11 — 팀 전파
 
-- README + CLAUDE.md + PROJECT.md 를 PR 로 올림 (제목 예: `chore(harness): adopt Claude Code harness`).
+- README + CLAUDE.md + PROJECT.md + `.claude/docs/` 를 PR 로 올림 (제목 예: `chore(harness): adopt Claude Code harness`).
 - 채택 후 첫 주는 페어로 작업 — 새 패턴 (worktree, `/ai-review` 자동 흐름, `/consistency-check` BLOCK) 에 익숙해질 때까지.
 - 공유 자료: [`OVERVIEW.md`](OVERVIEW.md) (강점/약점 + 라이프사이클 다이어그램).
 
@@ -292,10 +333,13 @@ cd .claude/worktrees/<task_name>-<slug>
 #    구현 착수 직전 /consistency-check --impl-prep 자동 호출
 #    TDD: 테스트 선작성 → 구현 → 보강
 #    TEST WORKFLOW: lint → unit → build → e2e (각 단계 자동 commit)
+#    각 단계는 .claude/tools/run-test.sh <stage> 로 호출 → 출력 truncation
 
 # 4. 사후 리뷰
 /ai-review                                 # 13 reviewer 병렬 (router 선별)
-# 자동 후속: 수정 → e2e → RESOLUTION.md
+# 자동 후속: resolution-applier sub-agent 가 분류·fix·e2e·RESOLUTION 자동 처리
+# (ESCALATE flag 가 spec / user-decision / infra / e2e-fail-3x / sensitive-fix 면
+#  main 으로 escalate — 사용자 결정 필요한 순간만 돌아옴)
 
 # 5. 한도 걸리면 무한 재시도
 /loop /ai-review                           # ScheduleWakeup 으로 자동 재시도
@@ -340,6 +384,11 @@ git worktree remove .claude/worktrees/<task>-<slug>
 - **원인**: `.claude/agents/<name>.md` definition 부재, prompt 파일 부재, 또는 `output_file` 경로 쓰기 권한 없음.
 - **확인**: `review/<…>/_prompts/<name>.md` 가 생성되었는지, `_retry_state.json` 의 `subagent_invocations` 와 일치하는지.
 
+### `.claude/tools/run-test.sh` 가 "CONFIG_MISSING" 출력
+
+- **원인**: `.claude/test-stages.sh` 파일이 없음.
+- **해결**: `cp .claude/test-stages.sh.example .claude/test-stages.sh` 후 `cmd_lint` · `cmd_unit` · `cmd_build` · `cmd_e2e` 4개 함수를 프로젝트 명령으로 채움.
+
 ### Claude Code 가 worktree 안내만 띄우고 동작 안 함
 
 - **원인**: UserPromptSubmit hook (`guard_default_branch_prompt.py`) · Bash 리마인더 (`guard_default_branch_bash.py`) 는 차단이 아닌 안내. 실제 차단은 Write/Edit 시점 (`guard_default_branch_edit.py`) 와 `git commit` 시점 (`.githooks/pre-commit`) 두 곳.
@@ -350,6 +399,11 @@ git worktree remove .claude/worktrees/<task>-<slug>
 - **원인**: 1시간 / 5시간 한도 도달.
 - **해결**: `/loop /ai-review` 로 진입하면 `ScheduleWakeup` 이 한도 회복 시점에 자동 재시도. main session 점유 안 함.
 
+### `/ai-review` 자동 후속 흐름이 잘못 자동 수정함
+
+- **원인**: resolution-applier sub-agent 가 민감 변경(DB 마이그레이션, 외부 API 계약 등)을 자동 수정하지 않아야 하는데 진행한 경우.
+- **해결**: SUMMARY.md 의 해당 항목에 "사용자 결정 필요" 명시 또는 화이트리스트 확대 (`PROJECT.md §변경 유형 매핑`). resolution-applier 의 ESCALATE 매트릭스가 `sensitive-fix` 로 escalate 해야 정상.
+
 ---
 
 ## 6. 다음 단계 — 깊이 있는 학습
@@ -357,13 +411,17 @@ git worktree remove .claude/worktrees/<task>-<slug>
 | 주제 | 문서 |
 |------|------|
 | 하네스 전체 구조 / 강점·약점 | [`OVERVIEW.md`](OVERVIEW.md) |
-| 공통 규약 (worktree · skill 체계 등) | `CLAUDE.md` |
+| 공통 규약 (짧은 SSOT) | `CLAUDE.md` |
+| Worktree 정책 상세 | `.claude/docs/worktree-policy.md` |
+| Plan 라이프사이클 | `.claude/docs/plan-lifecycle.md` |
+| Sub-agent 호출 규약 (공통) | `.claude/docs/subagent-call-contract.md` |
+| Test wrapper 사용법 | `.claude/docs/test-wrapper.md` |
 | 기획자 워크플로 | `.claude/skills/project-planner/SKILL.md` |
 | 개발자 워크플로 (TDD + TEST WORKFLOW) | `.claude/skills/developer/SKILL.md` |
 | 사전 검토 | `.claude/skills/consistency-checker/SKILL.md` |
 | 사후 리뷰 (자동 후속 흐름) | `.claude/skills/code-review-agents/SKILL.md` |
 | 다중 통합 | `.claude/skills/merge-coordinator/SKILL.md` |
-| Sub-agent 정의 (27종) | `.claude/agents/*.md` |
+| Sub-agent 정의 (28종) | `.claude/agents/*.md` |
 | Slash command 진입점 | `.claude/commands/*.md` |
 | Python orchestrator 내부 | `.claude/skills/_lib/`, `.claude/skills/*/scripts/` |
 
