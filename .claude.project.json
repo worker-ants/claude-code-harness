@@ -1,0 +1,17 @@
+{
+  "_schema": ".claude.project.json — see .claude/skills/_lib/project_config.py for the loader and default values. Every key is optional; missing keys fall back to harness defaults.",
+  "_purpose": "Python orchestrator (code_review_orchestrator.py 등) 가 spec/plan/review 폴더 위치를 찾을 때 참조하는 경로 매핑. 폴더 배치가 하네스 기본값과 동일하다면 본 파일은 생략 가능 (또는 기본값을 그대로 명시해 의도를 외부에 드러내도 좋다).",
+
+  "corpora": {
+    "spec":             "spec",
+    "conventions":      "spec/conventions",
+    "plan_in_progress": "plan/in-progress",
+    "plan_complete":    "plan/complete"
+  },
+  "outputs": {
+    "review_code":        "review/code",
+    "review_consistency": "review/consistency",
+    "review_merge":       "review/merge"
+  },
+  "code_areas": ["codebase"]
+}
