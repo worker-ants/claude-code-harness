@@ -84,7 +84,7 @@
 ```mermaid
 flowchart TD
     S1["1. 대상 저장소에 복사"] --> S2["2. .claude.project.json<br/>(폴더 기본값과 다르면)"]
-    S2 --> S3["3. PROJECT.md 작성<br/>(필수 6섹션)"]
+    S2 --> S3["3. PROJECT.md 작성<br/>(필수 6섹션 +<br/>선택 절 채택)"]
     S3 --> S4["4. CLAUDE.md 검토 / 조정<br/>(보통 그대로 OK)"]
     S4 --> S5["5. Makefile 에<br/>프로젝트 타겟 추가"]
     S5 --> S5a["6. .claude/test-stages.sh<br/>작성 (run-test.sh 가 source)"]
@@ -161,18 +161,36 @@ cp <harness-repo>/Makefile             .   # 또는 통합
 
 > 직접 작성이 부담될 경우, 해당 단계를 맨 뒤로 미루고 `claude`에게 요청해서 갱신할 수 있습니다. (특히, 기존 프로젝트에 도입시 유용합니다.)
 
-필수 섹션:
+#### 필수 섹션 (모든 프로젝트)
 
 | § | 섹션 | 누가 읽는가 | 누락 시 영향 |
 |---|------|-------------|------------|
 | 1 | 코드베이스 구조 | Main Claude — 영향 범위 추정 | 추정 부정확 |
-| 2 | 빌드·린트·테스트 명령 | TEST WORKFLOW 4단계 | 자동 흐름 정지 |
+| 2 | 빌드·린트·테스트 명령 | TEST WORKFLOW 4단계 (`.claude/tools/run-test.sh` wrapper) | 자동 흐름 정지 |
 | 3 | e2e 면제 화이트리스트 | 자동 e2e 의무 실행 흐름 | 모든 변경에 e2e 강제 |
 | 4 | 변경 유형 → 갱신 위치 매핑 | developer SKILL.md §4 | i18n·docs 누락 |
 | 5 | e2e 테스트 작성 가이드 | developer | 패턴 부재 |
 | 6 | 도메인 어휘 | 모든 sub-agent | 짧은 prompt 에서 맥락 손실 |
 
-PROJECT.md 끝의 **작성 체크리스트** 6개 항목을 모두 `[x]` 처리 후 안내 문구를 삭제.
+#### 함께 포함된 방법론 절 (템플릿에 baked-in — 인프라명·실측 사례만 채움)
+
+| 절 | 역할 |
+|----|------|
+| e2e 실행 원칙 (회피 안티패턴 · 사전 체크리스트 · 자주 누락 turn 패턴) | TEST WORKFLOW e2e 단계가 회피되지 않도록 자가 점검 |
+| 사후 보정 PR 패턴 금지 — 같은 turn 원칙 + DOCUMENTATION 단계 종료 체크리스트 | `fix(i18n):` · `fix(docs):` 별 commit 패턴 차단 |
+| Cross-stack 의무 (빌드 명령 표 직후 단락) | 멀티-stack 프로젝트가 wrapper 통해 양쪽 stack 묶음으로 호출하도록 |
+| Worktree 별 e2e 자동 격리 (선택 — 강력 권장) | 여러 worktree 동시 e2e 충돌 방지 |
+
+#### 선택 절 (프로젝트 사정에 따라 채택·삭제)
+
+| 절 | 채택 조건 |
+|----|----------|
+| 유저 가이드 파일 컨벤션 (SoT 문서 인덱스 + 자가 검증 체크리스트) | in-repo 사용자 가이드/문서를 유지하고 `user-guide-writer` sub-agent 로 위임할 때 |
+| i18n dict 파일 컨벤션 | i18n dict 를 단일 거대 파일이 아닌 섹션별로 split 할 때 |
+| 자동 가드 (build-time 차단) 목록 | 결정적 단위 테스트로 누락 검출을 빌드 단계에서 차단할 때 (i18n parity·spec frontmatter 등) |
+| 알려진 backend/frontend quirk · 우회 | e2e 헬퍼가 풀어주는 인증/세션/throttle 문제 등이 있을 때 |
+
+PROJECT.md 끝의 **작성 체크리스트** (12개 항목) 를 모두 `[x]` 처리 후 안내 문구를 삭제.
 
 ### 단계 4 — `CLAUDE.md` 검토
 

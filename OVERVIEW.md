@@ -695,18 +695,25 @@ flowchart LR
 | § | 섹션 | 목적 / 누가 읽는가 |
 | --- | --- | --- |
 | 1 | **코드베이스 구조** | 어떤 폴더에 어떤 스택. 변경 PR 의 영향 범위 추정. SKILL.md 의 "코드베이스" 언급은 여기를 참조 |
-| 2 | **빌드·린트·테스트 명령** | TEST WORKFLOW 의 lint / unit / build / e2e **각 단계의 실제 명령**. `.claude/test-stages.sh` 에 같은 명령을 함수로 박는다 |
+| 2 | **빌드·린트·테스트 명령** | TEST WORKFLOW 의 lint / unit / build / e2e **각 단계의 실제 명령** + Cross-stack 의무 단락 (멀티-stack 이면 wrapper 가 양쪽 묶음 강제). `.claude/test-stages.sh` 에 같은 명령을 함수로 박는다 |
 | 3 | **e2e 면제 화이트리스트** | "이 변경 set 만이면 e2e 안 돌려도 된다" 의 부분집합 규칙. **임의 확대 금지** — 추가는 PR 로 본 문서 갱신 |
 | 4 | **변경 유형 → 갱신 위치 매핑** | 코드 변경마다 함께 갱신해야 할 문서·번역·swagger·migration 테이블. 누락 검출 가드 |
-| 5 | **e2e 테스트 작성 가이드** | 언제 e2e 를 작성하는가, 파일 위치·명명, 패턴, 알려진 우회 |
+| 5 | **e2e 테스트 작성 가이드** | 언제 e2e 를 작성하는가, 파일 위치·명명, 패턴 / 헬퍼 / 응답 shape, 알려진 우회 |
 | 6 | **도메인 어휘** | 노드 카테고리, 표현식, 인프라 의존, 규약 폴더 등 — sub-agent 가 짧은 prompt 만 받아도 맥락을 잃지 않도록 |
 
-**선택 섹션 (프로젝트 사정에 따라 추가)**
+**방법론 절 (템플릿에 baked-in — 인프라명·실측 사례만 채우면 됨)**
 
+- **e2e 실행 원칙** — 회피 안티패턴(6가지) + 실행 사전 체크리스트(6단계) + 자주 누락되는 turn 패턴. `[skip-e2e]` 자체 발급 금지 등 RESOLUTION.md e2e 줄 4형식 차단 정책의 자가 점검 가이드
+- **사후 보정 PR 패턴 금지 — 같은 turn 원칙** + DOCUMENTATION 단계 종료 사전 체크리스트. `fix(i18n):` · `fix(docs):` 별 commit 패턴을 코드 변경과 같은 turn 안에서 차단
+- **Worktree 별 e2e 자동 격리** (빌드 명령 표 직후 단락) — compose project name 을 worktree basename 으로 도출해 동시 e2e 충돌 방지
+
+**선택 섹션 (프로젝트 사정에 따라 채택·삭제)**
+
+- **유저 가이드 파일 컨벤션** — in-repo 사용자 가이드/문서를 `user-guide-writer` sub-agent 로 위임할 때. SoT 문서 인덱스 + 자주 누락 작성 패턴 + 자가 검증 체크리스트
+- **i18n dict 파일 컨벤션** — i18n dict 를 단일 거대 파일이 아닌 섹션별로 split 할 때
+- **자동 가드 (build-time 차단)** — i18n parity · spec frontmatter · enum exhaustiveness · user-guide reverse-coverage 등 결정적 단위 테스트로 누락 검출
+- **알려진 backend/frontend quirk · 우회** — e2e 헬퍼가 풀어주는 한도·인증·세션 문제 등
 - e2e 화이트리스트 밖이지만 보류가 정당한 경우 — 사용자 명시 승인 절차
-- i18n / 유저 가이드 파일 컨벤션
-- 자동 가드 (build-time 차단) — i18n parity, locale, registry 등 결정적 단위 테스트 목록
-- 알려진 backend / frontend quirk · 우회 (e2e 헬퍼가 풀어주는 한도·인증·세션 문제 등)
 
 **작성 시 주의점**
 
@@ -747,7 +754,7 @@ cmd_e2e()   { make e2e-test; }
 ```mermaid
 flowchart TD
     A["1. 하네스 clone<br/>(.claude/ · .githooks/ · CLAUDE.md)"] --> B["2. .claude.project.json 작성<br/>(폴더가 기본값과 다르면)"]
-    B --> C["3. PROJECT.md 작성<br/>(필수 6섹션)"]
+    B --> C["3. PROJECT.md 작성<br/>(필수 6섹션 +<br/>선택 절 채택)"]
     C --> C2["4. .claude/test-stages.sh 작성<br/>(cmd_lint/unit/build/e2e)"]
     C2 --> D["5. make setup-githooks<br/>(pre-commit 활성화)"]
     D --> E["6. 첫 worktree 에서<br/>가벼운 task 로 dry-run<br/>(/ai-review · /consistency-check)"]
@@ -759,7 +766,7 @@ flowchart TD
     style F fill:#dfd,stroke:#080
 ```
 
-가장 비중이 큰 단계는 **§3 PROJECT.md 작성**. 6개 섹션 모두 누락 없이 채워야 자동 흐름이 안전하게 돈다. **§4 test-stages.sh** 는 PROJECT.md 의 명령을 함수로 옮기는 단순 작업.
+가장 비중이 큰 단계는 **§3 PROJECT.md 작성**. 필수 6 섹션 + 방법론 절(e2e 실행 원칙 · 사후 보정 PR 패턴 금지)의 placeholder 를 모두 채워야 자동 흐름이 안전하게 돈다. 선택 절(유저 가이드 컨벤션 · i18n dict 컨벤션 · 자동 가드 목록)은 프로젝트 사정에 따라 채택·삭제. **§4 test-stages.sh** 는 PROJECT.md 의 명령을 함수로 옮기는 단순 작업.
 
 ---
 
