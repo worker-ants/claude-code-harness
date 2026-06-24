@@ -45,7 +45,9 @@
 │   │   ├── guard_review_before_push.py     # PreToolUse (Bash) — git push 차단 (review/plan 미충족)
 │   │   ├── guard_review_before_stop.py     # Stop — turn 종료 전 review/plan nudge (세션당 1회)
 │   │   ├── normalize_worktree_branch.py    # UserPromptSubmit + PreToolUse(Bash) — 브랜치명 자동 교정
-│   │   └── lint_mermaid_posttooluse.py     # PostToolUse (Write/Edit) — 편집된 md 의 mermaid 린트
+│   │   ├── lint_mermaid_posttooluse.py     # PostToolUse (Write/Edit) — 편집된 md 의 mermaid 린트
+│   │   ├── mark_resolution_in_flight.py    # PreToolUse (Agent) — resolution-applier 디스패치 마커
+│   │   └── clear_resolution_in_flight.py   # SubagentStop — 마커 제거 (fix 중 Stop 재리뷰 nudge 억제)
 │   ├── skills/                       # 6개 핵심 skill + _lib
 │   │   ├── _lib/project_config.py    #   .claude.project.json 로더 (경로·토글)
 │   │   ├── developer/                #   구현/TDD 워크플로

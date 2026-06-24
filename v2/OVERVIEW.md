@@ -32,7 +32,7 @@
 | **Workflows (JS)** | `.claude/workflows/{ai-review, consistency-check, merge-coordinate}.js` | 네이티브 `Workflow` tool 스크립트 — route/fan-out/summary 의 결정적 오케스트레이션 (plan-metered) |
 | **변경-유형 SSOT** | `.claude/config/doc-sync-matrix.json` | PROJECT.md "변경 유형 → 갱신 위치 매핑" 표의 machine-readable 짝. `user-guide-sync-reviewer` 가 소비, `test_doc_sync_matrix.py` 가 행 수 1:1 검증 |
 | **Tools** | `.claude/tools/{ensure-worktree, run-test, bootstrap-session, cleanup-worktree, reap-merged-worktrees, plan-stale-audit}.sh`, `mermaid-lint/` | worktree 생성·정리·회수 · TEST stage 출력 truncation · 세션 부트스트랩 · stale plan 검출 · mermaid 파서 |
-| **Hooks** | `.claude/hooks/`, `.githooks/pre-commit` | default-branch 편집·commit 차단, push 전 review/plan 차단, turn-종료 nudge, 브랜치 정규화, mermaid 린트, prompt/bash 리마인더 |
+| **Hooks** | `.claude/hooks/`, `.githooks/pre-commit` | default-branch 편집·commit 차단, push 전 review/plan 차단, turn-종료 nudge, 브랜치 정규화, mermaid 린트, prompt/bash 리마인더, resolution-applier in-flight 마커(중복 재리뷰 억제) |
 | **Self-tests** | `.claude/tests/*.py` (표준 라이브러리만) | 하네스 자체 Python(가드·정규화·레지스트리·orchestrator·매트릭스)의 회귀 안전망 |
 | **Worktrees** | `.claude/worktrees/<task>-<slug>/` | 작업별 격리. main 워크트리는 통합/릴리스 전용 |
 | **세션 산출물** | `review/{code,consistency,merge,spec-coverage}/<YYYY>/<MM>/<DD>/<hh>_<mm>_<ss>/` | 모든 검토 흔적. `SUMMARY.md` + 에이전트별 결과 + `_retry_state.json` (+ ai-review `RESOLUTION.md`) |
@@ -64,7 +64,7 @@ flowchart TB
         I1["spec/ · plan/ · review/"]
         I2["codebase/ (code_areas)"]
         I3[".claude/worktrees/"]
-        I5["Hooks (8 진입점)"]
+        I5["Hooks (9개)"]
         I6[".claude/docs/ (lazy)"]
         I7["run-test.sh wrapper"]
         I8["doc-sync-matrix.json"]
@@ -343,7 +343,7 @@ Workflow 의 `agent()` 도 `claude -p` 와 달리 **플랜 토큰에 포함**되
 - **코드 쪽 시계 = author-date**: clean 파일은 그 파일을 건드린 commit 들의 **author date 최대값**(rebase 가 committer date 만 다시 쓰므로 author date 가 안정), dirty(미커밋) 파일만 fs mtime. → rebase 한 동일 내용이 "리뷰 이후 수정됨" 으로 잘못 재무장되지 않음.
 - **리뷰 쪽 시계 = 세션 디렉토리 경로 타임스탬프**: `<Y>/<m>/<d>/<H>_<M>_<S>` 는 경로 *이름* 이라 checkout/rebase 가 리셋하지 못함. 막 쓴(dirty) SUMMARY/RESOLUTION 은 mtime 을 함께 fold-in.
 - **spec-impl Gate 2**: 변경 코드가 어떤 spec frontmatter `code:` 글로브에 매칭되면(= 문서화된 spec surface 구현), 그 변경을 postdate 하는 `--impl-done` 일관성 리포트(BLOCK:NO)가 있어야 통과. spec 을 참조하지 않는 리팩토링은 이 게이트에 걸리지 않음.
-- **in-flight 억제**: `/ai-review` 가 막 시작돼 session_dir+meta.json 은 있고 SUMMARY 는 아직 없는 30분 윈도우엔 Stop nudge 를 띄우지 않음 (이미 돌고 있는 리뷰를 nudge 하지 않기 위함). push 가드는 그래도 hard backstop.
+- **in-flight 억제 (Stop 한정, 두 구간)**: Stop nudge 를 띄우지 않는 구간이 둘이다 — ① `/ai-review` 가 막 시작돼 session_dir+meta.json 은 있고 SUMMARY 는 아직 없는 구간, ② SUMMARY 작성 *後* `resolution-applier` 가 `codebase/**` 를 fix 하는 구간. ②를 놓치면 fix 편집이 리뷰 세션을 시간상 추월해 가드가 재무장 → 그 nudge 가 *"지금 /ai-review 재실행"* 을 지시 → 백그라운드 applier 가 어차피 할 재리뷰와 **중복 fan-out·토큰 낭비**. 감지 신호: dispatch 마커(`mark_resolution_in_flight.py`@PreToolUse(Agent) → `clear_resolution_in_flight.py`@SubagentStop, `.claude/state/resolution_in_flight/<tool_use_id>`) **또는** `_resolution_state.json ∧ SUMMARY ∧ ¬RESOLUTION`. 둘 다 30분 TTL 한정(크래시/포기 시 재무장). **push 가드엔 무영향** — half-fix push 는 계속 hard 차단(억제는 `guard_review_before_stop.py` 에서만).
 - **plan 링크 해소**: in-progress plan 의 frontmatter `worktree:` 값을 worktree basename(또는 `claude/` prefix 제거한 branch)과 매칭. `(unstarted)`·빈 값은 매칭 안 됨 → ad-hoc 작업은 plan 가드에 안 걸림 (자연스러운 escape hatch).
 - **fail-open**: git 부재·detached HEAD·파싱 실패는 모두 "차단 안 함". 가드는 세션을 wedge 하지 않습니다. 남는 구멍(예: 옛 commit 의 cherry-pick)은 의식적·드문 케이스로 수용 (`BYPASS_*`).
 
@@ -408,6 +408,7 @@ E(push)는 **hard gate**(exit 2 차단), F(stop)는 **soft nudge**(세션·branc
 - **`normalize_worktree_branch.py`** (UserPromptSubmit + PreToolUse Bash): 내장 `EnterWorktree` 가 만드는 `worktree-<name>` 브랜치를 프로젝트 컨벤션 `claude/<name>` 으로 자동 교정. idempotent, un-pushed worktree 브랜치만 건드림. UserPromptSubmit 에선 교정 시 안내 출력, PreToolUse(Bash)에선 같은-turn push 직전 조용히 교정.
 - **`lint_mermaid_posttooluse.py`** (PostToolUse Write/Edit) + `.githooks/pre-commit` guard 2: 편집·staged 된 markdown 의 깨진 ` ```mermaid ` 블록을 검출 (파서는 `tools/mermaid-lint/lint-mermaid.mjs`). node 없으면 fail-open.
 - **`bootstrap-session.sh`** (SessionStart): ① `core.hooksPath`→`.githooks` 자동 설정(잊기 쉬운 `setup-githooks` 대체), ② mermaid-lint deps 1회 설치(node_modules 는 gitignore — main checkout 공유), ③ `.claude/state/` 30일 GC, ④ PR 머지된 worktree·branch 자동 회수(`reap-merged-worktrees.sh`, local-only·fail-safe·self-throttled). 항상 exit 0 — 부트스트랩이 세션을 막지 않음.
+- **`mark_resolution_in_flight.py`** (PreToolUse Agent) **+ `clear_resolution_in_flight.py`** (SubagentStop): `resolution-applier` 디스패치 *순간* `.claude/state/resolution_in_flight/<tool_use_id>` 마커를 찍고(서브에이전트 실행 前 → 레이스 창 차단), SubagentStop 에 동일 `tool_use_id` 마커를 정밀 제거. `guard_review_before_stop.py` 가 이 마커(+상태 신호)로 **fix 진행 중 Stop 재리뷰 nudge 를 억제**해 중복 fan-out·토큰 낭비를 막는다 (§7 in-flight 억제). advisory plumbing(게이트 아님)·30분 TTL 백스톱·fail-open. push 가드엔 무영향.
 
 상세: [`.claude/docs/worktree-policy.md`](.claude/docs/worktree-policy.md), `hooks/_lib/{review_guard,plan_guard,branch_naming}.py`.
 
@@ -574,7 +575,7 @@ python3 -m unittest discover -s .claude/tests -p 'test_*.py'
 | `test_branch_guard.py` | default-branch 차단 결정 테이블 (default 는 resolve, hardcode 아님) |
 | `test_branch_naming.py` | `worktree-*`→`claude/*` 정규화 (idempotent · main/pushed/detached skip · 충돌 시 slug) |
 | `test_review_guard.py` | review 가드 block/allow + SUMMARY/RESOLUTION resolved 파서 + spec `code:` 글로브 + Gate 2 |
-| `test_review_guard_hardening.py` | checkout·rebase-immune 시계 (porcelain rename · `**/` 경계 · dirty→mtime/clean→author-date · in-flight · **rebase author-date 회귀**, 실제 임시 git repo 사용) |
+| `test_review_guard_hardening.py` | checkout·rebase-immune 시계 (porcelain rename · `**/` 경계 · dirty→mtime/clean→author-date · in-flight · **rebase author-date 회귀**, 실제 임시 git repo) + **resolution-applier in-flight 억제** (마커 hook I/O · `_resolution_state` 신호 · TTL · Stop nudge 문구 분기) |
 | `test_plan_guard.py` | plan 미갱신·완료-미이동 판정 |
 | `test_agent_consistency.py` | agent 레지스트리 4곳 drift (add/rename/remove 검출, prose 워딩은 비검사) |
 | `test_orchestrator_state.py` | code-review orchestrator CLI 상태기계 (`--update`/`--apply-routing`/`--resume`, subprocess) |
