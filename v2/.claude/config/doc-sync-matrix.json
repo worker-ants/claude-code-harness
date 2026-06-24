@@ -1,0 +1,106 @@
+{
+  "_doc": "Machine-readable SSOT for PROJECT.md §변경 유형 → 갱신 위치 매핑. Consumed by user-guide-sync-reviewer (stable change_type enumeration) and validated by .claude/tests/test_doc_sync_matrix.py. The PROJECT.md prose table is the human-readable companion; the test binds the two (same row count) and checks that every guard_test / convention_ref / concrete trigger-glob base path resolves. Edit BOTH together — the test fails on divergence.",
+  "_template": "이 파일은 SKELETON 입니다 — 아래 rows[] 는 generic placeholder 예시이며, 빈 스켈레톤(codebase·spec 미존재)에서도 JSON 형상 self-test 가 통과하도록 guard_tests 는 [] · convention_ref 는 null 로 비워 두었습니다. 채택 시: (1) 프로젝트의 실제 변경 유형으로 rows 를 교체하고, (2) PROJECT.md §변경 유형 → 갱신 위치 매핑 표를 같은 행 수로 맞추고 (test_row_count_matches_project_md_table), (3) guard_tests 에 실제 *.test.ts 이름을, convention_ref 에 실제 spec/...md 경로를, trigger.globs 에 실제 codebase 경로를 채우세요 — 이들은 test_doc_sync_matrix.py 가 codebase/·spec/ 에서 존재성을 검사합니다. 변경 유형별 동반 갱신이 없는 프로젝트라면 rows 를 비우고 user_guide_sync reviewer 를 .claude.project.json 에서 disable 하세요. (PROJECT.md 가 참조하는 spec 문서·*.test.ts 존재성 검사는 실제 codebase·spec 가 생긴 뒤 활성화됩니다.)",
+  "_schema": {
+    "id": "stable slug",
+    "change_type": "human label; its core phrase must also appear in the PROJECT.md table",
+    "trigger": "{ globs: [...], match: 'glob' | 'semantic' } — semantic rows have no clean glob and need reviewer judgment",
+    "targets": "human-readable required co-update locations (may contain <placeholders>/{ko,en} braces)",
+    "verify": "verification command string (literal), or null if manual/none",
+    "guard_tests": "specific *.test.ts files this row's guard relies on (subset, existence-checked under codebase/)",
+    "convention_ref": "spec/conventions/*.md or spec/*.md SoT path, or null"
+  },
+  "rows": [
+    {
+      "id": "new-ui-string",
+      "change_type": "신규 UI 문자열",
+      "trigger": { "globs": ["<예: codebase/frontend/src/**/*.tsx>"], "match": "semantic" },
+      "targets": [
+        "<예: codebase/frontend/src/lib/i18n/dict/{ko,en}/<section>.ts 양쪽 — 한쪽만 추가 금지 (parity 가드 fail)>"
+      ],
+      "verify": "<예: cd codebase/frontend && npm test -- i18n>",
+      "guard_tests": [],
+      "convention_ref": null
+    },
+    {
+      "id": "db-schema-change",
+      "change_type": "DB 스키마 변경",
+      "trigger": { "globs": ["<예: codebase/backend/src/**/entities/**>"], "match": "semantic" },
+      "targets": [
+        "<예: migration + entity + repository + e2e>"
+      ],
+      "verify": "<예: make e2e-test>",
+      "guard_tests": [],
+      "convention_ref": null
+    },
+    {
+      "id": "api-endpoint-change",
+      "change_type": "API 추가·변경",
+      "trigger": { "globs": ["<예: codebase/backend/src/**/*.controller.ts>"], "match": "semantic" },
+      "targets": [
+        "<예: controller·DTO 의 swagger jsdoc>",
+        "<예: API 노출 변경이 사용자 안내에 영향 → 관련 user-guide 페이지>"
+      ],
+      "verify": null,
+      "guard_tests": [],
+      "convention_ref": null
+    },
+    {
+      "id": "new-error-code",
+      "change_type": "신규 backend 에러/경고 코드 발행",
+      "trigger": { "globs": [], "match": "semantic" },
+      "targets": [
+        "<예: frontend 의 에러 코드 → 사용자 가시 메시지(로케일) 매핑 테이블>"
+      ],
+      "verify": "<예: cd codebase/frontend && npm test -- backend-labels>",
+      "guard_tests": [],
+      "convention_ref": null
+    },
+    {
+      "id": "new-cross-cutting-enum",
+      "change_type": "신규 cross-cutting enum 값 추가",
+      "trigger": { "globs": [], "match": "semantic" },
+      "targets": [
+        "<예: registry 컨벤션 매트릭스 행 추가>",
+        "<예: 매트릭스가 가리키는 모든 코드 분기 위치 동시 갱신 (assertNever)>",
+        "<예: AST exhaustiveness 가드 통과>"
+      ],
+      "verify": "<예: cd codebase/frontend && npm test -- enum-exhaustiveness>",
+      "guard_tests": [],
+      "convention_ref": null
+    },
+    {
+      "id": "spec-major-change",
+      "change_type": "spec 신규/대규모 변경",
+      "trigger": { "globs": ["<예: spec/2-*/**>", "<예: spec/conventions/**>"], "match": "glob" },
+      "targets": [
+        "<예: frontmatter code: / status: / pending_plans: 정합 갱신>",
+        "<예: status: partial 이면 pending_plans: 의 plan 신설>",
+        "<예: status: implemented 이면 code: 글로브 ≥1 매치 보장>"
+      ],
+      "verify": "<예: cd codebase/frontend && npm test -- spec-frontmatter>",
+      "guard_tests": [],
+      "convention_ref": null
+    },
+    {
+      "id": "env-runtime-change",
+      "change_type": "환경 변수·기동 방법 변경",
+      "trigger": { "globs": [], "match": "semantic" },
+      "targets": ["README.md"],
+      "verify": null,
+      "guard_tests": [],
+      "convention_ref": null
+    },
+    {
+      "id": "spec-defect-found",
+      "change_type": "spec 자체에 누락·오류가 있다고 판단됨",
+      "trigger": { "globs": [], "match": "semantic" },
+      "targets": [
+        "plan/in-progress/spec-update-<name>.md 에 제안 노트 작성 후 project-planner 위임"
+      ],
+      "verify": null,
+      "guard_tests": [],
+      "convention_ref": null
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+# git
+.git/
+
+# IDE
+.idea/
+
+# Claude Code runtime artifacts
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+.claude/state/
+
+# Claude Code user settings (per-user override — not team-shared)
+.claude/settings.local.json
+
+# Python bytecode (hooks · skill orchestrators)
+__pycache__/
+*.pyc
+
+# mermaid-lint tooling deps (bootstrap-session.sh `npm install`s these on demand;
+# node_modules is gitignored so worktrees share the single main-checkout copy)
+.claude/tools/mermaid-lint/node_modules/
+
+# TEST WORKFLOW wrapper logs (disk-retained, accumulates — prune periodically:
+# find _test_logs -mtime +7 -delete)
+_test_logs/
+
+# Reviewer/checker/coordinator sub-agent 입력 페이로드 (orchestrator 가 호출 직전 작성,
+# sub-agent 가 한 번 읽고 끝). diff + role checklist 의 시점 직렬화본이라 commit hash +
+# .claude/skills/ 로 항상 재생성 가능하고, 리뷰 결론은 별도 <role>.md / SUMMARY.md /
+# meta.json 에 남는다. review/ 전체의 ~70% 를 차지해 blob 누적이 빠르므로 git 에 두지 않는다.
+review/**/_prompts/
+
+# 채택 시 추가: 프로젝트 코드의 빌드 산출물·패키지 디렉토리 (예: node_modules/, dist/)
+# node_modules/
+# dist/

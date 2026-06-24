@@ -1,0 +1,44 @@
+{
+  "_schema": ".claude.project.json — see .claude/skills/_lib/project_config.py for the loader and default values. Every key is optional; missing keys fall back to harness defaults.",
+  "corpora": {
+    "spec":             "spec",
+    "conventions":      "spec/conventions",
+    "plan_in_progress": "plan/in-progress",
+    "plan_complete":    "plan/complete"
+  },
+  "outputs": {
+    "review_code":        "review/code",
+    "review_consistency": "review/consistency",
+    "review_merge":       "review/merge"
+  },
+  "code_areas": ["codebase"],
+  "_agents_doc": "agents.{reviewers,checkers,writers} 는 ALL_AGENTS / ALL_CHECKERS / ALL_WRITERS 의 부분 토글. 아래 enumerate 된 키는 전체 목록이며 값은 현재 enabled 상태 (전부 true = 디폴트). 비활성하려면 해당 키를 false 로. 키 자체를 지워도 디폴트(true) 라 동일. 일회성 override: REVIEW_AGENTS / CONSISTENCY_AGENTS env (project_config 보다 우선). 각 reviewer/checker 의 관점: .claude/skills/code-review-agents/README.md §Reviewer sub-agent (14) · .claude/skills/consistency-checker/SKILL.md §5개 Checker. writers 는 호출자(예: developer skill §4 DOCUMENTATION) 가 위임 직전 is_agent_enabled 로 게이팅. SKELETON 디폴트: user_guide_sync(reviewer)·user_guide(writer) 는 false 로 출고된다 — 이 둘은 프로젝트별 in-repo 사용자 가이드 + i18n/docs 동반-갱신 매트릭스(doc-sync-matrix.json·PROJECT.md §유저 가이드 컨벤션) 설정을 전제하므로, 그것을 채택한 프로젝트만 true 로 켠다 (관련 agent 정의는 적용 사례용 예시 도메인을 담고 있어 켜기 전 자기 프로젝트에 맞게 조정).",
+  "agents": {
+    "reviewers": {
+      "security":         true,
+      "performance":      true,
+      "architecture":     true,
+      "requirement":      true,
+      "scope":            true,
+      "side_effect":      true,
+      "maintainability":  true,
+      "testing":          true,
+      "documentation":    true,
+      "dependency":       true,
+      "database":         true,
+      "concurrency":      true,
+      "api_contract":     true,
+      "user_guide_sync":  false
+    },
+    "checkers": {
+      "cross_spec":            true,
+      "rationale_continuity":  true,
+      "convention_compliance": true,
+      "plan_coherence":        true,
+      "naming_collision":      true
+    },
+    "writers": {
+      "user_guide": false
+    }
+  }
+}
