@@ -61,7 +61,7 @@
 | Worktree enforcement | 4-layer (편집 차단 · prompt/bash 안내 · git pre-commit) | 동일 + 아래 강화 |
 | **review/plan push·stop 가드** | ✗ | ✓ — 미리뷰·plan 미갱신 시 `git push` 차단 + turn-종료 nudge |
 | **네이티브 `Workflow` tool 경로** | ✗ (Agent fan-out 만) | ✓ — `.claude/workflows/*.js` 3종 |
-| **하네스 self-test** | ✗ | ✓ — `.claude/tests/` 12종 (표준 라이브러리만) |
+| **하네스 self-test** | ✗ | ✓ — `.claude/tests/` 13종 (표준 라이브러리만) |
 | **변경-유형 매트릭스** | prose (`PROJECT.md` 표) | + machine-readable SSOT (`doc-sync-matrix.json`) + 바인딩 test |
 | **SessionStart 부트스트랩** | ✗ (수동 `make setup-githooks`) | ✓ — hooksPath·deps·state GC·머지 worktree 회수 자동 |
 | 브랜치 정규화 · mermaid 린트 | ✗ | ✓ (`worktree-*`→`claude/*`, md mermaid 검사) |

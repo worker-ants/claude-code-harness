@@ -579,6 +579,7 @@ python3 -m unittest discover -s .claude/tests -p 'test_*.py'
 | `test_plan_guard.py` | plan 미갱신·완료-미이동 판정 |
 | `test_agent_consistency.py` | agent 레지스트리 4곳 drift (add/rename/remove 검출, prose 워딩은 비검사) |
 | `test_orchestrator_state.py` | code-review orchestrator CLI 상태기계 (`--update`/`--apply-routing`/`--resume`, subprocess) |
+| `test_consistency_impl_done.py` | consistency `--impl-done` HEAD-basis 가드: 신규 식별자(code+spec 동시 추가)가 프롬프트에 증거로 들어가고 "CWD=diff-base 라 상대 Read 신뢰 금지" notice 가 박혀 미구현 오탐 차단 (impl-done 전용 스코프, subprocess) |
 | `test_doc_sync_matrix.py` | PROJECT.md 매트릭스 ↔ `doc-sync-matrix.json` 행 수 1:1 + 참조 `*.test.ts`/`spec/...md`/글로브 base 실존 (**harness↔product 바인딩**) |
 | `test_run_test_watchdog.py` · `test_reap_merged_worktrees.py` | run-test wrapper watchdog · 머지된 worktree 회수 |
 
